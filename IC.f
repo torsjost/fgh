@@ -1,12 +1,15 @@
-      Program haldane3
+      Program hal3gw
 
 * Two dimensional hexagonal plane!! 2 bands!!
 * Compute orbital magnetization IC contrubution as well as Chern number!!
-* See PRL95, 137205 (2005). Compare with Fig. 2.
+
+* rmu calcalted as in the middle of the gap !!
+* Read Greens function from 116 or 117 !!
+* nphi same as in hgw4.f !!
 
 
       implicit real*8 (a-h,o-z)
-      parameter (maxp=1500,kdim=2)
+      parameter (maxp=1500,kdim=2,maxk=10000) !maxk is new (Just an exaggeratred size for the Green's function for each phi)
 
       double precision eA,eB,t1,t2,phi
       double precision rtemp1,rtemp2,rtemp3 
@@ -31,6 +34,10 @@
       double precision e1xm(2)  !kx-d
       double precision e1yp(2)  !ky+d
       double precision e1ym(2)  !ky-d
+      double precision derxEn(2)
+      double precision deryEn(2)
+
+      double precision Gnnp(2,2,maxk)  ! Gnnp is new 
 
       double precision z1xp(2,2,2)  !kx+d
       double precision z1xm(2,2,2)  !kx-d
@@ -44,15 +51,16 @@
 
       complex*16 ukn(2,2), xi, csum, csum1, csum2, csum3, csumx, csumy
       complex*16 csum5, csum6, csum7
-      complex*16 ukxp(2)
-      complex*16 ukxm(2)
-      complex*16 ukyp(2)
-      complex*16 ukym(2)
-      complex*16 derxuk(2)
-      complex*16 deryuk(2)
+      complex*16 ukxp(2,2)
+      complex*16 ukxm(2,2)
+      complex*16 ukyp(2,2)
+      complex*16 ukym(2,2)
+      complex*16 derxuk(2,2)
+      complex*16 deryuk(2,2)
 
       integer nkabc(3), p(4,6), iw1(2)
-      integer itest 
+      integer itest
+      integer ib1,ib2 
 
 
 
@@ -63,9 +71,11 @@
       xi    = dcmplx(0.d0,1.d0)
 
 * Open files.
-      open(unit=1,file='input.d',status='OLD')
-      open(unit=2,file='Morb3.d',status='UNKNOWN')
-      open(unit=3,file='Chern3.d',status='UNKNOWN')
+      open(unit=1,file='haldane3.d',status='OLD')
+      open(unit=2,file='Morb3-gw.d',status='UNKNOWN')
+      open(unit=3,file='Chern3-gw.d',status='UNKNOWN')
+      open(unit=116,file='fort.116',status='UNKNOWN') !116 is new (NOT USED)
+      open(unit=117,file='fort.117',status='UNKNOWN') !117 is new
 
       read(1,*)ipp,itotal
       read(1,*)nkabc
@@ -111,6 +121,8 @@
       write(6,*)'No phasefactors!!'
       endif
 
+
+
 * Calculate M.
 * If boundary k-points is used !!
       volwgt = ( (8.d0*pi*pi)/(3.d0*dsqrt(3.d0)) )*
@@ -124,7 +136,7 @@
       numk = nkabc(1)*nkabc(2)
       write(6,*)'Number k (no boundaries):',numk
 
-      uxm=(2.d0/3.d0)*2.d0*pi ! This is the dimension of the 4 sided version of BZ
+      uxm=(2.d0/3.d0)*2.d0*pi
       uym=uxm
       dux=dble(uxm/nkabc(1))
       duy=dble(uym/nkabc(2))
@@ -133,9 +145,9 @@
       yy = 6.00d0    !Thonhauser PRL 2005 E0=2 and t2=1/3
 *      yy = 5.25d0    !Thonhauser PRL 2005 E0=2 and t2=1/3
 *      yy = 4.00d0    !Thonhauser PRL 2005 E0=2 and t2=1/3
-*      yy = 3.67d0    ! <- This is at the transition for phi=pi/4
+*      yy = 3.67d0
 *      yy = 3.5d0
-*      yy = 3.00d0     !Ceresoli PRB74, 024408
+!      yy = 3.00d0     !Ceresoli PRB74, 024408
 *      yy = 1.00d0
 *      yy = 0.00d0
 
@@ -144,14 +156,57 @@
       eA = -t2*yy
       eB = -eA
 
-      ! Below, 3.67=3*sqrt(3)*sin(phi=pi/4)... Just a choice
-      if(yy.gt.3.67d0) write(6,'(a20,f10.3)')'Normal insulator !!'
-      if(yy.le.3.67d0) write(6,'(a20,f10.3)')'Chern insulator !!'
+      ! new: removed writing if normal or chern
       write(6,'(a20,f10.3)')'eA:',eA
       write(6,'(a20,f10.3)')'eB:',eB
       write(6,'(a20,f10.3)')'Delta/t2:',dabs(eA)/t2
       write(6,'(a20,f10.3)')'beta:',beta
 
+!!!!! Beginning of new part
+
+* Test k-mesh !!
+* Without boundary we have (2*nkabc(1)+1) fewer points compared with the boundary case!!
+      write(6,*)'k-mesh!'
+      ux=-dux
+
+      icount = 0
+
+      
+      do ix = 1, nkabc(1) +1  !Also boundary
+*      do ix = 1, nkabc(1)      !No boundary 2->3 and 3->4 
+
+      ux=ux+dux
+      uy=-duy
+
+      do iy = 1, nkabc(2) +1    !Also boundary 
+*      do iy = 1, nkabc(2)        !No boundary 2->3 and 3->4
+
+      uy=uy+duy
+
+
+* For fix (ux,uy) solve for (kx,ky).
+      kx  =  ux*dsqrt(3.d0)/2.d0
+      ky  = -ux/2.d0 + uy
+
+      icount = icount + 1
+      write(6,'(2i4,2f10.6)')ix,iy,kx/twopi, ky/twopi
+
+
+* Find index for Dirac point k=K.
+      tolk = 0.000001d0
+      if(dabs(kx-twopi*(2.d0/3.d0)*(1.d0/dsqrt(3.d0))).lt.tolk)then
+      if(dabs(ky).lt.tolk)then
+      write(6,*)'Index K:',ix,iy
+      endif
+      endif
+
+      enddo
+      enddo
+
+      write(6,*)'icount:',icount
+*      stop 
+
+!!!!! End of new part
 
 
       dphi = pi/dble(nphi-1)
@@ -159,9 +214,22 @@
       phiC(i) = dphi*dble(i-1)
       enddo
 
+
+* Only one rewind !!
+*      rewind(116)
+      rewind(117)      ! This is new
+      tol = 0.0001d0   ! This is new
+
+
       do ip = 1, nphi 
+*      do ip = 11, 11 
 
       phi = phiC(ip) 
+
+*      read (116,'(i4,5f12.6)') ip0, phi0
+      read (117,'(i4,5f12.6)') ip0, phi0           ! This is new
+      write (115,'(i4,5f12.6)') ip0, phi0          ! This is new
+      if(dabs(phi0-phi).ge.tol) stop 'Error phi'   ! This is new
 
 
 * Find rmu for each phi !!
@@ -170,10 +238,9 @@
       ky = 0.d0
 
 * Fix diagonal elements.
-      do i = 1,kdim ! kdim=2
+      do i = 1,kdim
       do j = 1,kdim
-      ! h1 is the Hamiltonian
-      h1(i,j,1)  = 0.d0 ! I assume 1 and 2 here are real and imag
+      h1(i,j,1)  = 0.d0
       h1(i,j,2)  = 0.d0
       o1(i,j,1)  = 0.d0
       o1(i,j,2)  = 0.d0
@@ -181,16 +248,14 @@
       enddo
 
       do i = 1,kdim
-      o1(i,i,1)  = 1.d0 ! Put the diagonal "atom" components of o1 to 1
+      o1(i,i,1)  = 1.d0
       enddo
 
 * Diagonal elements H11 and H22 first!
-      ! Recall (Kai Sun)
       rtemp1     = dcos(dsqrt(3.d0)*kx - phi)
       rtemp2     = dcos(-dsqrt(3.d0)*kx/2.d0 + 3.d0*ky/2.d0 - phi)
       rtemp3     = dcos(-dsqrt(3.d0)*kx/2.d0 - 3.d0*ky/2.d0 - phi)
 
-      ! Atom 1 = A, Atom 2 = B
       h1(1,1,1)  =  -2.d0*t2*(rtemp1 + rtemp2 + rtemp3) + eA
 
       rtemp1     = dcos(dsqrt(3.d0)*kx + phi)
@@ -216,14 +281,9 @@
       h1(2,1,1)  =   h1(1,2,1)
       h1(2,1,2)  =  -h1(1,2,2)
 
-! The Hamiltonian matrix is now completed
-
 * For kx,ky!!
       call diagno(kdim,h1,o1,w1,iw1,z1,e1)
 
-      ! We put chem. pot. as the average of energies at the K point
-      ! (since it gives the right value), and the gap as the difference
-      ! in energy at K. 
       rmu = (e1(2) + e1(1))/2.d0
       gap = (e1(2) - e1(1))/2.d0
 
@@ -231,8 +291,8 @@
       write(69,'(5f10.6)')phi/pi, rmu, e1(1),e1(2),gap 
 
 
+! This is where the interesting code starts
 
-! Note that we are still at a certain ip (phi value)
 * For Chern number and IC contribution!
       csum1 = dcmplx(0.d0,0.d0)
       csum2 = dcmplx(0.d0,0.d0)
@@ -242,8 +302,6 @@
       icount = 0
       ux=-dux
 
-      ! With nkabc(1)=25 this is 1->26 (we thus enter neighboring zones
-      ! in k space
       do ix = 1, nkabc(1) +1   !With boundary
 *      do ix = 1, nkabc(1)       !No boundary
 
@@ -255,12 +313,32 @@
 
       uy=uy+duy
 
-      ! icount counts the k index
       icount = icount + 1
 
 * For fix (ux,uy) solve for (kx,ky).
       kx  =  ux*dsqrt(3.d0)/2.d0
       ky  = -ux/2.d0 + uy
+
+!!!!! Beginning of new part
+
+*      read (116,'(i4,6f12.6)') iq, tempkx,tempky,
+*     .                         Gnnp(1,1,iq),Gnnp(1,2,iq),
+*     .                         Gnnp(2,1,iq),Gnnp(2,2,iq)
+      read (117,'(i4,6f12.6)') iq, tempkx,tempky,
+     .                         Gnnp(1,1,iq),Gnnp(1,2,iq),
+     .                         Gnnp(2,1,iq),Gnnp(2,2,iq)
+      write (115,'(i4,6f12.6)') iq, tempkx,tempky,
+     .                         Gnnp(1,1,iq),Gnnp(1,2,iq),
+     .                         Gnnp(2,1,iq),Gnnp(2,2,iq)
+
+!      Gnnp(1,1,icount) = 1.d0 This should probably be removed (so I
+!      comment it)
+
+*      if(icount.ne.iq)   stop
+*      if(kx.ne.tempkx)   stop
+*      if(ky.ne.tempky)   stop
+
+!!!!! End of new part
 
 * Fix diagonal elements.
       do i = 1,kdim
@@ -275,9 +353,6 @@
       do i = 1,kdim
       o1(i,i,1)  = 1.d0
       enddo
-
-! Same as before but for this specific k (not K, which we used when
-! calculating the chemical potential and the gap)
 
 * Diagonal elements H11 and H22 first!
       rtemp1     = dcos(dsqrt(3.d0)*kx - phi)
@@ -312,29 +387,23 @@
 * For kx,ky!!
       call diagno(kdim,h1,o1,w1,iw1,z1,e1)
 
-! Note that the chemical potential enters ff (we never make use of the
-! gap)
-
 * Fermifactor.
       ff    = 1.d0/(1.d0+dexp( beta*(e1(1)-rmu) ))
 
 
-
       do ib      = 1,kdim  !Band
-      ekn(ib)    = e1(ib) - rmu ! For this particular k point and band
-                                ! ib this is e-mu
+      ekn(ib) = e1(ib) - rmu
       do i1      = 1,kdim
-      ukn(i1,ib) = dcmplx(z1(i1,ib,1),z1(i1,ib,2)) ! |u_{kn}> is the
-                                                   ! eigenvector and is complex valued
-                                                   ! i1 is the atom
-                                                   ! index
+      ukn(i1,ib) = dcmplx(z1(i1,ib,1),z1(i1,ib,2))
       enddo
       enddo
 
+! new: Comment on the above: For unshifted stuff we already include all bands.
+!      We want to do that also for shifted things (at the same time as we use 
+!      the proper Green function). I guess we should have two entries on
+!      the ukxp etc.
 
-! Note, we are still in the do ix, do iy 
 * For kx+dx,ky!!
-      ! dx is for the shifted mesh needed for derivatives
       kx  =  ux*dsqrt(3.d0)/2.d0 + dx
       ky  = -ux/2.d0 + uy
 * Fix diagonal elements.
@@ -385,23 +454,48 @@
 * For kx+dx,ky!!
       call diagno(kdim,h1,o1,w1,iw1,z1xp,e1xp)
 
-! This is important (Dual states, if we use covariant derivative)
-! Later: I will change the method (nice to first do here, and then with GW)
 
-* Determine dual state! Band 1 only occupied.
-      csum  = dcmplx(0.d0,0.d0)
-      do i1 = 1,kdim ! sum over atoms but middle index (band) = 1 (occ)
-      csum  = csum + dcmplx(z1  (i1,1,1),-z1  (i1,1,2))*
-     .               dcmplx(z1xp(i1,1,1), z1xp(i1,1,2))*
+* Determine dual state! Band 1 only occupied. <- Not anymore
+      do ib    = 1,kdim !Band /Tor
+      do i1 = 1,kdim
+      csum  = dcmplx(z1  (i1,ib,1),-z1  (i1,ib,2))* ! MODIFY!!!!!!
+     .               dcmplx(z1xp(i1,ib,1), z1xp(i1,ib,2))*
      .               cdexp(xi*dx*( tx(i1)))
+      !I don't think it is as easy as I have written here, since there probably
+      !is an intermediate band summation of something like that
 
+      ukxp(i1,ib) = dcmplx(z1xp(i1,ib,1),z1xp(i1,ib,2))/csum
+      enddo
       enddo
 
-*      csum = csum/cdabs(csum)
+!* For kx,ky!!
+!      call diagno(kdim,h1,o1,w1,iw1,z1,e1)
+!
+!      do ib      = 1,kdim  !Band
+!      ekn(ib) = e1(ib) - rmu
+!      do i1      = 1,kdim
+!      ukn(i1,ib) = dcmplx(z1(i1,ib,1),z1(i1,ib,2))
+!      enddo
+!      enddo
 
-      do i1    = 1,kdim
-      ukxp(i1) = dcmplx(z1xp(i1,1,1),z1xp(i1,1,2))/csum
-      enddo 
+
+!!!!! Beginning of new (commented) code
+  
+* Determine dual state! Band 2 occupied.
+* Resta!
+*      csum  = dcmplx(0.d0,0.d0)
+*      do i1 = 1,kdim
+*      csum  = csum + dcmplx(z1  (i1,2,1),-z1  (i1,2,2))*
+*     .               dcmplx(z1xp(i1,2,1), z1xp(i1,2,2))*
+*     .               cdexp(xi*dx*( tx(i1)))
+*
+*      enddo
+*
+*      do i1    = 1,kdim
+*      ukxp(i1) = dcmplx(z1xp(i1,2,1),z1xp(i1,2,2))/csum
+*      enddo
+
+!!!!! End of new (commented) code
 
 * For kx-dx,ky!!
       kx  =  ux*dsqrt(3.d0)/2.d0 - dx
@@ -456,18 +550,32 @@
 
 
 * Determine dual state! Band 1 only occupied.
-      csum  = dcmplx(0.d0,0.d0)
+      
+      do ib=1,kdim
       do i1 = 1,kdim
-      csum  = csum + dcmplx(z1  (i1,1,1),-z1  (i1,1,2))*
-     .               dcmplx(z1xm(i1,1,1), z1xm(i1,1,2))*
+      csum  = dcmplx(z1  (i1,ib,1),-z1  (i1,ib,2))*
+     .               dcmplx(z1xm(i1,ib,1), z1xm(i1,ib,2))*
      .               cdexp(xi*dx*(-tx(i1)))
+      ukxm(i1,ib) = dcmplx(z1xm(i1,ib,1),z1xm(i1,ib,2))/csum
+      enddo
       enddo
 
-*      csum = csum/cdabs(csum)
+!!!!! Beginning of new (commented) code
 
-      do i1    = 1,kdim
-      ukxm(i1) = dcmplx(z1xm(i1,1,1),z1xm(i1,1,2))/csum
-      enddo
+* Determine dual state! Band 2 occupied.
+* Resta!
+*      csum  = dcmplx(0.d0,0.d0)
+*      do i1 = 1,kdim
+*      csum  = csum + dcmplx(z1  (i1,2,1),-z1  (i1,2,2))*
+*     .               dcmplx(z1xm(i1,2,1), z1xm(i1,2,2))*
+*     .               cdexp(xi*dx*(-tx(i1)))
+*      enddo
+*
+*      do i1    = 1,kdim
+*      ukxm(i1) = dcmplx(z1xm(i1,2,1),z1xm(i1,2,2))/csum
+*      enddo
+
+!!!!! End of new (commented) code
 
 
 * For kx,ky+dy!!
@@ -523,18 +631,33 @@
 
 
 * Determine dual state! Band 1 only occupied.
-      csum  = dcmplx(0.d0,0.d0)
+      
+      do ib=1,kdim 
       do i1 = 1,kdim
-      csum  = csum + dcmplx(z1  (i1,1,1),-z1  (i1,1,2))*
-     .               dcmplx(z1yp(i1,1,1), z1yp(i1,1,2))*
+      csum  = dcmplx(z1  (i1,ib,1),-z1  (i1,ib,2))*
+     .               dcmplx(z1yp(i1,ib,1), z1yp(i1,ib,2))*
      .               cdexp(xi*dy*( ty(i1)))
+
+      ukyp(i1,ib) = dcmplx(z1yp(i1,ib,1),z1yp(i1,ib,2))/csum
+      enddo
       enddo
 
-*      csum = csum/cdabs(csum)
+!!!!! Beginning of new (commented) code
 
-      do i1    = 1,kdim
-      ukyp(i1) = dcmplx(z1yp(i1,1,1),z1yp(i1,1,2))/csum
-      enddo
+* Determine dual state! Band 2 ounoccupied.
+* Resta!
+*      csum  = dcmplx(0.d0,0.d0)
+*      do i1 = 1,kdim
+*      csum  = csum + dcmplx(z1  (i1,2,1),-z1  (i1,2,2))*
+*     .               dcmplx(z1yp(i1,2,1), z1yp(i1,2,2))*
+*     .               cdexp(xi*dy*( ty(i1)))
+*      enddo
+*
+*      do i1    = 1,kdim
+*      ukyp(i1) = dcmplx(z1yp(i1,2,1),z1yp(i1,2,2))/csum
+*      enddo
+
+!!!!! End of new (commented) code
 
 
 * For kx,ky-dy!!
@@ -602,73 +725,135 @@
       call diagno(kdim,h1,o1,w1,iw1,z1ym,e1ym)
 
 
-* Determine dual state! Band 1 only occupied. ! Modify this later on
-      csum  = dcmplx(0.d0,0.d0)
+* Determine dual state! Band 1 only occupied.
+      
+      do ib=1,kdim
       do i1 = 1,kdim
-      csum  = csum + dcmplx(z1  (i1,1,1),-z1  (i1,1,2))*
-     .               dcmplx(z1ym(i1,1,1), z1ym(i1,1,2))*
+      csum  = dcmplx(z1  (i1,ib,1),-z1  (i1,ib,2))*
+     .               dcmplx(z1ym(i1,ib,1), z1ym(i1,ib,2))*
      .               cdexp(xi*dy*(-ty(i1)))
+    
+      ukym(i1,ib) = dcmplx(z1ym(i1,ib,1),z1ym(i1,ib,2))/csum
+      enddo
       enddo
 
-*      csum = csum/cdabs(csum)
+!!!!! Beginning of new (commented) code
 
-      do i1    = 1,kdim
-      ukym(i1) = dcmplx(z1ym(i1,1,1),z1ym(i1,1,2))/csum
-      enddo
+* Determine dual state! Band 2 unoccupied.                
+* Resta! 
+*      csum  = dcmplx(0.d0,0.d0)
+*      do i1 = 1,kdim
+*      csum  = csum + dcmplx(z1  (i1,2,1),-z1  (i1,2,2))*     
+*     .               dcmplx(z1ym(i1,2,1), z1ym(i1,2,2))*
+*     .               cdexp(xi*dy*(-ty(i1)))
+*      enddo
+*
+*      do i1    = 1,kdim
+*      ukym(i1) = dcmplx(z1ym(i1,2,1),z1ym(i1,2,2))/csum
+*      enddo
+
+!!!!! End of new (commented) code
 
 
 * Determine the derivatives!
+      do ib=1,kdim
       do i2      = 1,kdim
-      derxuk(i2) = ( ukxp(i2) - ukxm(i2) )/(2.d0*dx) 
-      deryuk(i2) = ( ukyp(i2) - ukym(i2) )/(2.d0*dy) 
+      derxuk(i2,ib) = ( ukxp(i2,ib) - ukxm(i2,ib) )/(2.d0*dx) 
+      deryuk(i2,ib) = ( ukyp(i2,ib) - ukym(i2,ib) )/(2.d0*dy) 
+      enddo
       enddo
 
-! Here we use the chemical potential again (csum1=0 before the first k
-! loop)
-      csum1 = csum1  +  ( dconjg(derxuk(1))*deryuk(1)    !IC contribution
-     .               +    dconjg(derxuk(2))*deryuk(2) 
-     .               -    dconjg(deryuk(1))*derxuk(1) 
-     .               -    dconjg(deryuk(2))*derxuk(2) )*
-     .                    (e1(1)-rmu) 
+!!!!! Beginning of new csum1
+
+      do ib=1,kdim
+        derxEn(ib)     = (e1xp(ib)-e1xm(ib))/(2.d0*dx) ! We also need for index 2
+        deryEn(ib)     = (e1yp(ib)-e1ym(ib))/(2.d0*dy)
+      enddo
 
 
-      csum2 = csum2  +  dconjg(derxuk(1))*deryuk(1)   !Chern number
-     .               +  dconjg(derxuk(2))*deryuk(2)
-     .               -  dconjg(deryuk(1))*derxuk(1)
-     .               -  dconjg(deryuk(2))*derxuk(2)
+      do ib1=1,kdim
+      do ib2=1,kdim
+      ctemp1 =          ( dconjg(derxuk(1,ib1))*deryuk(1,ib2)    !IC contribution
+     .               +    dconjg(derxuk(2,ib1))*deryuk(2,ib2)    ! 
+     .               -    dconjg(deryuk(1,ib1))*derxuk(1,ib2)    ! old part
+     .               -    dconjg(deryuk(2,ib1))*derxuk(2,ib2) )* ! (modify)
+     .                    (e1(ib2)-rmu)                    ! 
+     .
+     .               +  ( dconjg(deryuk(1,ib1))*ukn(1,ib2)     ! 
+     .               +    dconjg(deryuk(2,ib1))*ukn(2,ib2) )*  !
+     .                    derxEn(ib1)                         ! new part
+     .               -  ( dconjg(derxuk(1,ib1))*ukn(1,ib2)     ! (modify)
+     .               +    dconjg(derxuk(2,ib1))*ukn(2,ib2) )*  !
+     .                    deryEn(ib1)                         !
+
+      csum1 = csum1 + Gnnp(ib2,ib1,icount)*ctemp1            ! new (I guess this has to be modified 
+                                                         ! since we only use Gnp(1,1,icount) here
+      enddo
+      enddo 
+
+!!!!! End of new csum1 (old code commented below)
+!!!!!                  (csum2 same as before)
+
+!      csum1 = csum1  +  ( dconjg(derxuk(1))*deryuk(1)    !IC contribution
+!     .               +    dconjg(derxuk(2))*deryuk(2) 
+!     .               -    dconjg(deryuk(1))*derxuk(1) 
+!     .               -    dconjg(deryuk(2))*derxuk(2) )*
+!     .                    (e1(1)-rmu) 
 
 
+! I COMMENT THIS FOR NOW
+!      csum2 = csum2  +  dconjg(derxuk(1))*deryuk(1)   !Chern number
+!     .               +  dconjg(derxuk(2))*deryuk(2)
+!     .               -  dconjg(deryuk(1))*derxuk(1)
+!     .               -  dconjg(deryuk(2))*derxuk(2)
+!
+!
+!!!!!! Beginning of new code
+!
+!      rtemp1 = dreal(     dconjg(deryuk(1))*ukn(1,1)
+!     .               +    dconjg(deryuk(2))*ukn(2,1)  
+!     .               -    dconjg(derxuk(1))*ukn(1,1)
+!     .               -    dconjg(derxuk(2))*ukn(2,1) ) 
+!      rtemp2 = dimag(     dconjg(deryuk(1))*ukn(1,1)
+!     .               +    dconjg(deryuk(2))*ukn(2,1)  
+!     .               -    dconjg(derxuk(1))*ukn(1,1)
+!     .               -    dconjg(derxuk(2))*ukn(2,1) ) 
+!
+!
+!      tol1 = 0.000000001d0
+!      if(rtemp1.gt.tol1) stop 'Error !!'
+!      if(rtemp2.gt.tol1) stop 'Error !!'
+
+
+*      write(6,'(a30,4f10.6)')'<der u(n=1) | u(n=1) >:',kx,ky,
+*     .                        rtemp1, rtemp2
+
+!!!!! End of new code
 
       enddo
       enddo     !End k-sums
 
 
+*      write(6,*)'icount and numk:',icount,numk
 
 
-
-      fact = 1.d0/(twopi)**2
-      fact = fact/2.d0
+      fact = 1.d0/(twopi)**2 ! new: Before, we divided by 2
 
 
       if(ip.eq.1) write(6,'(a30,3f10.2)')'IC contribution to M:'
       if(ip.eq.1) write(2,'(a30,3f10.2)')'IC contribution to M:'
 
       write(6,'(a30,3f10.4)')'M:',phi/pi,
-     .dimag(csum1*volwgt*fact)*(-2.d0)
+     .-dimag(csum1*volwgt*fact) ! new: This change cancels the change in fact
 
-*      write(6,'(a30,3f10.4)')'M:',phi/pi,
-*     .dimag(csum1*volwgt*fact)*(-2.d0)  
-*      write(6,'(a30,3f10.4)')'M:',phi/pi, 
-*     .dimag(csum1*volwgt*fact)*(-2.d0)*2.d0  !FA extra factor 2 
+      write(2,'(3f10.4)') phi/pi, -dimag(csum1*volwgt*fact) ! new: This
+change cancels the change in fact 
 
-*      write(2,'(3f10.4)') phi/pi, dimag(csum7*volwgt*fact)*( 2.d0)*2.d0    !Need extra factor 2 for Resta
-      write(2,'(3f10.4)') phi/pi, dimag(csum1*volwgt*fact)*(-2.d0) 
-*      write(2,'(3f10.4)') phi/pi, dimag(csum1*volwgt*fact)*(-2.d0)*2.d0  !FA extra factor 2 
-
-      if(ip.eq.1) write(3,'(a30,3f10.2)')'Chern number:'
-      write(3,'(5f10.3)')phi/pi,csum2*volwgt*xi/twopi, 
-     .3.d0*dsqrt(3.d0)*dsin(phi),
-     .-3.d0*dsqrt(3.d0)*dsin(phi)
+! COMMENT THIS FOR NOW
+!      if(ip.eq.1) write(3,'(a30,3f10.2)')'Chern number:'
+!      write(3,'(5f10.3)')phi/pi,csum2*volwgt*xi/twopi, 
+!     . 3.d0*dsqrt(3.d0)*dsin(phi),
+!     .-3.d0*dsqrt(3.d0)*dsin(phi)
 
 
       enddo     !End phi-loop
